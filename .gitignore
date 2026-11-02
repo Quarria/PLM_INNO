@@ -1,0 +1,13 @@
+node_modules/
+**/node_modules/
+**/dist/
+.env
+.env.*
+!.env.example
+backend/storage/
+backend/data/
+*.tsbuildinfo
+*.log
+.DS_Store
+
+docs/reference/*.xlsx
