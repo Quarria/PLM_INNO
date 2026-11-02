@@ -39,12 +39,17 @@ export class ApiController {
   @Roles('admin', 'business') @Permission('catalog:write') @Post('brands') brand(@Body() body: any, @Req() req: AuthedRequest) { return this.api.createBrand(body, actor(req)); }
   @Roles('admin', 'business') @Permission('catalog:write') @Patch('brands/:id') updateBrand(@Param('id') id: string, @Body() body: any, @Req() req: AuthedRequest) { return this.api.updateBrand(id, body, actor(req)); }
 
+  @Roles('admin', 'business') @Get('rules-page') rulesPage(@Query() query: Record<string, string>) { return this.api.listRulesPage(query); }
+  @Roles('admin', 'business') @Get('rule-match') ruleMatch(@Query() query: Record<string, string>) { return this.api.matchQuoteRule(query); }
+  @Roles('admin', 'business') @Get('rule-customer-counts') ruleCustomerCounts() { return this.api.countCustomerRules(); }
   @Roles('admin', 'business') @Get('rules') rules() { return this.api.listRules(); }
   @Roles('admin', 'business') @Permission('price:manage') @Post('rules') createRule(@Body() body: any, @Req() req: AuthedRequest) { return this.api.saveRule(body, actor(req)); }
   @Roles('admin', 'business') @Permission('price:manage') @Delete('rules/:id') deleteRule(@Param('id') id: string, @Req() req: AuthedRequest) { return this.api.deleteRule(id, actor(req)); }
   @Roles('admin', 'business') @Permission('price:manage') @Put('rules/:id') updateRule(@Param('id') id: string, @Body() body: any, @Req() req: AuthedRequest) { return this.api.saveRule(body, actor(req), id); }
 
   @Roles('admin', 'business') @Permission('quote:create') @Post('quotes') createQuote(@Body() body: any, @Req() req: AuthedRequest) { return this.api.createQuote(body, actor(req)); }
+  @Get('quotes-page') quotesPage(@Query() query: Record<string, string>) { return this.api.listQuotesPage(query); }
+  @Get('quotes-summary') quotesSummary() { return this.api.quotesSummary(); }
   @Get('quotes') quotes() { return this.api.listQuotes(); }
   @Get('quotes/:id') quote(@Param('id') id: string) { return this.api.getQuote(id); }
   @Roles('admin', 'business') @Permission('quote:create') @Post('quotes/:id/submit') submitQuote(@Param('id') id: string, @Req() req: AuthedRequest) { return this.api.submitQuote(id, actor(req)); }

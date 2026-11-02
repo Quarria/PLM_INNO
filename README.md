@@ -9,48 +9,77 @@
 ## 环境要求
 
 - Node.js 24 LTS（或当时受支持且经验证的 Node LTS）和 npm。
-- 默认使用随项目启动的本地 PGlite，无需安装 PostgreSQL 服务。Node.js 仍需安装。
+- 可访问的 PostgreSQL 数据库，以及具备相应权限的专用数据库账号。
 - 局域网允许客户端访问应用主机选定端口。
 
 ## 首次配置
 
-1. 在 `backend/.env.example` 基础上复制为 `backend/.env`，保留 `DB_MODE=pglite`，填写强随机 JWT 密钥、公司展示名称/联系信息和首次管理员用户名/长密码（至少 12 位）。该文件已排除在 Git 外，禁止提交真实凭据。
-2. 从仓库根目录安装依赖：
+1. 准备 PostgreSQL 数据库，复制 `backend/.env.example` 为 `backend/.env`。在 `backend/.env` 中填写：
 
-   ```sh
-   npm install
+   ```env
+   DB_HOST=数据库IP或域名
+   DB_PORT=5432
+   DB_NAME=数据库名称
+   DB_USER=数据库账号
+   DB_PASSWORD=数据库密码
+   DB_SCHEMA=plm
+   DB_SSL=false
    ```
 
-3. 开发模式运行：
+   同时设置不少于 32 个字符的 `JWT_SECRET`，并按需设置公司名称和联系信息。数据库若要求 TLS，将 `DB_SSL` 改为 `true`；此模式要求服务端证书可信。`.env` 不应提交至版本库。
+
+2. 从项目根目录安装依赖：
 
    ```sh
-   npm run dev
+   npm ci
    ```
 
-   首次启动自动创建本地数据库、执行迁移并创建管理员；之后保留数据。页面在 `http://localhost:5173`，API 在 `http://localhost:3000`。同一局域网的其他设备开发调试时访问开发电脑的 5173 端口。
+3. **仅对已确认的目标数据库执行初始化。** 先备份已有数据。若使用新的空库，在 `backend/.env` 中设置首次管理员用户名和至少 12 位密码，然后依次执行：
 
-4. 生产构建并运行：
+   ```sh
+   npm run db:prepare -w backend
+   npm run migration:run -w backend
+   npm run seed:admin -w backend
+   ```
+
+   `db:prepare` 创建配置的 schema；迁移创建或升级业务表；`seed:admin` 创建指定管理员。已有数据的数据库应先核对迁移状态，避免将空库初始化流程用于已有业务表。服务启动时不会自动运行迁移。
+
+4. 构建并运行：
 
    ```sh
    npm run build
    npm run start -w backend
    ```
 
-   使用 `http://<应用主机内网IP>:3000` 访问。部署时在操作系统防火墙中仅放行公司局域网需要访问的端口。主机需保持运行。
+   本机访问 `http://localhost:3000`；同一局域网可访问 `http://<应用主机内网IP>:3000`。主机需保持运行。
 
-## 云端 PostgreSQL
+   开发时可使用 `npm run dev`，前端位于 `http://localhost:5173`，API 位于 3000 端口。
 
-以后切换时，先迁移并核对本地数据，设置 `DB_MODE=postgres`、云数据库 `DATABASE_URL` 和相应 `DB_SSL`，再按目标数据库情况执行 `npm run db:prepare -w backend`、`npm run migration:run -w backend`。迁移数据是单独步骤，切换连接不会自动搬迁数据。首次空库也可使用 [`backend/sql/init.sql`](backend/sql/init.sql)（固定 `plm` schema）。云端模式不会在启动时自动执行迁移。
+## 迁移既有数据
+
+配置线上连接不会自动迁移原 PGlite 数据。先停止旧服务，完整备份 `backend/data/pglite` 和 `backend/data/media`。商品图片仍存放在应用主机，切换服务器时也需迁移图片目录。不要删除或提交原数据库文件。
+
+迁移至新空库时，先设置 `backend/.env`，对已确认的目标数据库执行 `npm run db:prepare -w backend` 和 `npm run migration:run -w backend`，**不要先执行 `seed:admin`**：原管理员账号将从原数据库迁移。
+
+迁移工具单独安装，不会让正常服务依赖 PGlite：
+
+```sh
+npm install --prefix backend/tools/migration
+npm run build -w backend
+node backend/tools/migration/migrate.cjs --source "PGlite数据库备份目录"
+```
+
+工具先检查源和目标的表结构、数据量及目标是否为空，并只输出记录数，不写入数据。确认目标和预检结果正确后，在同一命令后加 `--apply` 执行数据库迁移。迁移在事务内进行；目标已有业务记录时会拒绝写入。工具只接受独立的数据库备份目录，不直接操作原始目录。迁移结束后应核对商品、客户、报价、账号权限及图片，并保留原始备份。若目标已有业务数据，须另行制定合并方案。
 
 ## 首次管理员与权限
 
-本地模式首次启动时按环境变量创建管理员；已存在用户时不会覆盖账号。云端空库可通过 `npm run seed:admin -w backend` 创建首个管理员。管理员在“用户与权限”中新增业务员、确认人员，并为角色分配 `catalog:write`、`price:manage`、`cost:view`、`quote:create`、`quote:confirm` 等权限。只有拥有确认权限的账号可以确认报价；业务员角色经授权后可以维护价格。
+首次管理员由 `npm run seed:admin -w backend` 根据环境变量创建；已有同名账号时不会覆盖。管理员在“用户与权限”中新增业务员、确认人员，并为角色分配 `catalog:write`、`price:manage`、`cost:view`、`quote:create`、`quote:confirm` 等权限。只有拥有确认权限的账号可以确认报价；业务员角色经授权后可以维护价格。
 
 若初始部署后需要更换管理员密码，应通过受控的账号维护流程处理；不要将密码写进源码或日志。
 
 ## 数据、图片与备份
 
-商品图片保存在 `MEDIA_DIR`（默认 `backend/data/media`）；本地数据库保存在 `PGLITE_DATA_DIR`（默认 `backend/data/pglite`）。先正常停止应用，再备份数据库整个目录和图片目录；恢复前在隔离环境验证。云端模式另需备份云数据库及图片。不要删除或提交本地数据目录。
+商品图片保存在 `MEDIA_DIR`（默认 `backend/data/media`）；业务数据保存在配置的 PostgreSQL 数据库。数据库与图片需分别备份，并在隔离环境验证恢复。不要提交图片、数据库备份或 `.env`。
 
 ## 功能入口
 
@@ -68,4 +97,4 @@
 - 首期不支持组合商品嵌套，组合商品可以用自身规则计价，否则按组成项计算参考价。
 - 报价生成后不提供报价单内改价功能；未确认报价可按当前规则重算，已确认报价复制新版本后重新确认。
 - Windows、Linux 和 macOS 的部署启动须在各目标机器分别验证；本代码仓库提供 Node 项目级运行方式，不是已打包的桌面安装程序。
-- 本地模式使用单数据库连接处理请求；多人同时操作会排队。云端数据库尚未连接和验证。
+- 线上数据库连接需要按实际地址、账号和网络环境配置；原本地数据库不会自动迁移。

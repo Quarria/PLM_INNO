@@ -231,6 +231,39 @@ export class ApiService {
     const products = variants.length ? await this.repo(Product).findBy({ id: In([...new Set(variants.map((v) => v.productId))]) }) : [];
     return rules.map((rule) => { const variant = variants.find((v) => v.id === rule.variantId); const product = products.find((p) => p.id === variant?.productId); return { ...rule, product: product ? { sku: product.sku, name: product.name } : null, variant: variant ? { specification: variant.specification, unit: variant.unit } : null, tiers: tiers.filter((t) => t.ruleId === rule.id) }; });
   }
+  async listRulesPage(query: Record<string, string>) {
+    const page = Number(query.page || 1), size = Number(query.size || 10);
+    if (!Number.isSafeInteger(page) || page < 1 || ![10, 20, 50].includes(size)) throw new BadRequestException('分页参数无效');
+    const search = String(query.q || '').trim().slice(0, 100);
+    const qb = this.repo(PriceRule).createQueryBuilder('r')
+      .leftJoin(ProductVariant, 'v', 'v.id = r.variant_id')
+      .leftJoin(Product, 'p', 'p.id = v.product_id')
+      .leftJoin(Brand, 'b', 'b.id = r.brand_id')
+      .leftJoin(Customer, 'c', 'c.id = r.customer_id')
+      .where('r.active = :active', { active: true });
+    if (search) {
+      const value = `%${search.replace(/[\\%_]/g, '\\$&')}%`;
+      const quoteType = ({ '自有品牌': 'own', '客户贴牌': 'private' } as Record<string, string>)[search] || '';
+      qb.andWhere("(p.sku ILIKE :search ESCAPE '\\' OR p.name ILIKE :search ESCAPE '\\' OR v.specification ILIKE :search ESCAPE '\\' OR v.unit ILIKE :search ESCAPE '\\' OR b.name ILIKE :search ESCAPE '\\' OR c.name ILIKE :search ESCAPE '\\' OR r.quoteType = :quoteType)", { search: value, quoteType });
+    }
+    const [rules, total] = await qb.orderBy('r.updatedAt', 'DESC').addOrderBy('r.id', 'ASC').skip((page - 1) * size).take(size).getManyAndCount();
+    if (!rules.length) return { items: [], total };
+    const ids = rules.map((r) => r.id);
+    const tiers = await this.repo(PriceTier).find({ where: { ruleId: In(ids) }, order: { minQuantity: 'ASC' } });
+    const variants = await this.repo(ProductVariant).findBy({ id: In(rules.map((r) => r.variantId)) });
+    const products = variants.length ? await this.repo(Product).findBy({ id: In(variants.map((v) => v.productId)) }) : [];
+    const items = rules.map((rule) => { const variant = variants.find((v) => v.id === rule.variantId); const product = products.find((p) => p.id === variant?.productId); return { ...rule, product: product ? { sku: product.sku, name: product.name } : null, variant: variant ? { specification: variant.specification, unit: variant.unit } : null, tiers: tiers.filter((t) => t.ruleId === rule.id) }; });
+    return { items, total };
+  }
+  async matchQuoteRule(query: Record<string, string>) {
+    if (!['own', 'private'].includes(query.quoteType) || !isUuid(query.variantId || '') || !isUuid(query.brandId || '') || (query.quoteType === 'private' && !isUuid(query.customerId || ''))) throw new BadRequestException('报价类型、商品、品牌或客户无效');
+    const rule = await this.repo(PriceRule).findOne({ where: { quoteType: query.quoteType as 'own' | 'private', variantId: query.variantId, brandId: query.brandId, customerId: query.quoteType === 'private' ? query.customerId : IsNull(), active: true } });
+    return { rule: rule ? { id: rule.id, quantityMode: rule.quantityMode } : null };
+  }
+  async countCustomerRules() {
+    const rows = await this.repo(PriceRule).createQueryBuilder('r').select('r.customer_id', 'customerId').addSelect('COUNT(*)', 'count').where('r.active = :active AND r.customer_id IS NOT NULL', { active: true }).groupBy('r.customer_id').getRawMany();
+    return rows.map((row) => ({ customerId: row.customerId, count: Number(row.count) }));
+  }
   async saveRule(body: any, actor: Actor, id?: string) {
     if (!['own', 'private'].includes(body.quoteType) || !body.variantId || !body.brandId || !['whole', 'segmented'].includes(body.quantityMode)) throw new BadRequestException('价格类型、商品规格、品牌及计价方式必填');
     if (body.quoteType === 'private' && !body.customerId) throw new BadRequestException('贴牌价格必须关联客户');
@@ -424,6 +457,32 @@ export class ApiService {
     const items = await this.repo(QuoteItem).find({ where: { quoteId: In(all.map((q) => q.id)) } });
     const tiers = items.length ? await this.repo(QuoteTier).find({ where: { quoteItemId: In(items.map((x) => x.id)) } }) : [];
     return all.map((quote) => this.presentQuote(quote, items.filter((item) => item.quoteId === quote.id), tiers));
+  }
+  async listQuotesPage(query: Record<string, string>) {
+    const page = Number(query.page || 1), size = Number(query.size || 10);
+    if (!Number.isSafeInteger(page) || page < 1 || ![10, 20, 50].includes(size)) throw new BadRequestException('分页参数无效');
+    const search = String(query.q || '').trim().slice(0, 100);
+    const qb = this.repo(Quote).createQueryBuilder('q');
+    if (search) {
+      const value = `%${search.replace(/[\\%_]/g, '\\$&')}%`;
+      const status = ({ '草稿': 'draft', '待确认': 'pending', '已确认': 'confirmed', '已失效': 'void', '失效': 'void' } as Record<string, string>)[search] || '';
+      const quoteType = ({ '自有品牌': 'own', '客户贴牌': 'private' } as Record<string, string>)[search] || '';
+      const itemSearch = qb.subQuery().select('1').from(QuoteItem, 'i').where('i.quote_id = q.id').andWhere("(i.product_snapshot->>'sku' ILIKE :search ESCAPE '\\' OR i.product_snapshot->>'name' ILIKE :search ESCAPE '\\')").getQuery();
+      qb.where(`(q.quote_number ILIKE :search ESCAPE '\\' OR q.customer_snapshot->>'name' ILIKE :search ESCAPE '\\' OR q.brand_snapshot->>'name' ILIKE :search ESCAPE '\\' OR q.status = :status OR q.quoteType = :quoteType OR EXISTS ${itemSearch})`, { search: value, status, quoteType });
+    }
+    const [quotes, total] = await qb.orderBy('q.createdAt', 'DESC').addOrderBy('q.id', 'ASC').skip((page - 1) * size).take(size).getManyAndCount();
+    if (!quotes.length) return { items: [], total };
+    const items = await this.repo(QuoteItem).find({ where: { quoteId: In(quotes.map((q) => q.id)) } });
+    const tiers = items.length ? await this.repo(QuoteTier).find({ where: { quoteItemId: In(items.map((x) => x.id)) } }) : [];
+    return { items: quotes.map((quote) => this.presentQuote(quote, items.filter((item) => item.quoteId === quote.id), tiers)), total };
+  }
+  async quotesSummary() {
+    const total = await this.repo(Quote).count();
+    const pending = await this.repo(Quote).countBy({ status: 'pending' });
+    const customerCounts = await this.repo(Quote).createQueryBuilder('q').select('q.customer_id', 'customerId').addSelect('COUNT(*)', 'count').groupBy('q.customer_id').getRawMany();
+    const recent = await this.repo(Quote).find({ order: { createdAt: 'DESC', id: 'ASC' }, take: 5 });
+    const items = recent.length ? await this.repo(QuoteItem).find({ where: { quoteId: In(recent.map((q) => q.id)) } }) : [];
+    return { total, pending, customerCounts: customerCounts.map((r) => ({ customerId: r.customerId, count: Number(r.count) })), recent: recent.map((quote) => ({ ...quote, itemCount: items.filter((item) => item.quoteId === quote.id).length })) };
   }
   async submitQuote(id: string, actor: Actor) {
     const quote = await this.repo(Quote).findOneBy({ id });

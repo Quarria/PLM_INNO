@@ -6,6 +6,7 @@ import {
 } from 'element-plus'
 import 'element-plus/dist/index.css'
 import './style.css'
+import './ledger-system.css'
 import App from './App.vue'
 
 const app = createApp(App)
