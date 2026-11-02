@@ -23,6 +23,7 @@ let ruleRequest = 0
 let ruleSearchTimer: ReturnType<typeof setTimeout> | undefined
 const quotes = ref<AnyRow[]>([])
 const quoteSearch = ref('')
+const quoteStatus = ref('')
 const quotePage = ref(1)
 const quotePageSize = ref(10)
 const quoteTotal = ref(0)
@@ -39,6 +40,7 @@ const users = ref<AnyRow[]>([])
 const loginForm = reactive({ username: '', password: '' })
 const showProduct = ref(false)
 const productSearch = ref('')
+const productKind = ref('')
 const productPage = ref(1)
 const productPageSize = ref(10)
 const productTotal = ref(0)
@@ -60,8 +62,16 @@ const showBom = ref(false)
 const showReview = ref(false)
 const selectedQuote = ref<AnyRow | null>(null)
 const imageFile = ref<File | null>(null)
+const imageInput = ref<HTMLInputElement | null>(null)
+const imageRemoved = ref(false)
+const imagePreviewUrl = ref('')
+watch(imageFile, (file, _previous, onCleanup) => {
+  imagePreviewUrl.value = file ? URL.createObjectURL(file) : ''
+  if (imagePreviewUrl.value) { const url = imagePreviewUrl.value; onCleanup(() => URL.revokeObjectURL(url)) }
+})
 
 const productForm = reactive({ sku: '', name: '', kind: 'product', description: '', imagePath: '', active: true, variants: [{ id: '', specification: '', unit: '套' }] as AnyRow[] })
+const productImagePreview = computed(() => imagePreviewUrl.value || productForm.imagePath)
 const customerForm = reactive({ name: '', contact: '', phone: '', notes: '', active: true })
 const brandForm = reactive({ name: '', kind: 'own', customerId: '', active: true })
 const baseForm = reactive({ variantId: '', purchasePrice: '', standardRetailPrice: '' })
@@ -82,9 +92,11 @@ const canManage = computed(() => has('price:manage'))
 const canConfirm = computed(() => has('quote:confirm'))
 const canAdmin = computed(() => me.value?.roles?.includes('admin'))
 watch(productSearch, () => { productPage.value = 1; clearTimeout(productSearchTimer); productSearchTimer = setTimeout(() => { void loadProducts() }, 300) })
+watch(productKind, () => { productPage.value = 1; void loadProducts() })
 watch(productPageSize, () => { productPage.value = 1; void loadProducts() })
 watch(productPage, () => { void loadProducts() })
 watch(quoteSearch, () => { quotePage.value = 1; clearTimeout(quoteSearchTimer); quoteSearchTimer = setTimeout(() => { void loadQuotes() }, 300) })
+watch(quoteStatus, () => { quotePage.value = 1; void loadQuotes() })
 watch(quotePageSize, () => { quotePage.value = 1; void loadQuotes() })
 watch(quotePage, () => { void loadQuotes() })
 watch(ruleSearch, () => { rulePage.value = 1; clearTimeout(ruleSearchTimer); ruleSearchTimer = setTimeout(() => { void loadRules() }, 300) })
@@ -147,6 +159,7 @@ async function loadProducts() {
   const request = ++productRequest
   try {
     const params = new URLSearchParams({ page: String(productPage.value), size: String(productPageSize.value), q: productSearch.value.trim() })
+    if (productKind.value) params.set('kind', productKind.value)
     const result = await api<{ items: AnyRow[]; total: number; activeCount: number }>(`/products-page?${params}`)
     if (request !== productRequest) return
     const maxPage = Math.max(1, Math.ceil(result.total / productPageSize.value))
@@ -174,6 +187,7 @@ async function loadQuotes() {
   quotesLoading.value = true
   try {
     const params = new URLSearchParams({ page: String(quotePage.value), size: String(quotePageSize.value), q: quoteSearch.value.trim() })
+    if (quoteStatus.value) params.set('status', quoteStatus.value)
     const result = await api<{ items: AnyRow[]; total: number }>(`/quotes-page?${params}`)
     if (request !== quoteRequest) return
     const maxPage = Math.max(1, Math.ceil(result.total / quotePageSize.value))
@@ -211,8 +225,26 @@ onMounted(async () => {
   }
 })
 
-function openProduct() { editingProductId.value = ''; Object.assign(productForm, { sku: '', name: '', kind: 'product', description: '', imagePath: '', active: true, variants: [{ id: '', specification: '', unit: '套' }] }); imageFile.value = null; showProduct.value = true }
-function editProduct(product: AnyRow) { editingProductId.value = product.id; Object.assign(productForm, { sku: product.sku, name: product.name, kind: product.kind, description: product.description || '', imagePath: product.imagePath || '', active: product.active, variants: (product.variants || []).slice(0, 1).map((v: AnyRow) => ({ id: v.id, specification: v.specification, unit: v.unit })) }); imageFile.value = null; showProduct.value = true }
+function openProduct() { imageRemoved.value = false; editingProductId.value = ''; Object.assign(productForm, { sku: '', name: '', kind: 'product', description: '', imagePath: '', active: true, variants: [{ id: '', specification: '', unit: '套' }] }); imageFile.value = null; showProduct.value = true }
+function editProduct(product: AnyRow) { imageRemoved.value = false; editingProductId.value = product.id; Object.assign(productForm, { sku: product.sku, name: product.name, kind: product.kind, description: product.description || '', imagePath: product.imagePath || '', active: product.active, variants: (product.variants || []).slice(0, 1).map((v: AnyRow) => ({ id: v.id, specification: v.specification, unit: v.unit })) }); imageFile.value = null; showProduct.value = true }
+function selectProductImage(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) return
+  if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 5 * 1024 * 1024) {
+    input.value = ''
+    ElMessage.warning('请选择不超过 5 MB 的 JPEG、PNG 或 WebP 图片')
+    return
+  }
+  imageRemoved.value = false
+  imageFile.value = file
+}
+function removeProductImage() {
+  imageFile.value = null
+  productForm.imagePath = ''
+  imageRemoved.value = true
+  if (imageInput.value) imageInput.value.value = ''
+}
 async function uploadSelectedImage() {
   if (!imageFile.value) return productForm.imagePath
   const fd = new FormData(); fd.append('file', imageFile.value)
@@ -436,10 +468,10 @@ async function saveBom() {
       <div class="page-content" v-loading="loading">
         <template v-if="section==='overview'">
           <div class="welcome-row"><div><h1>把每一份报价，做到心中有数。</h1><p>从待办开始，查看客户报价与业务资料。</p></div><el-button v-if="has('quote:create')" type="primary" size="large" @click="openQuote">＋ 新建报价</el-button></div>
-          <div class="stat-grid"><article v-for="tile in tiles" :key="tile.label" class="stat-card" :class="{attention:tile.label==='待确认报价'}"><span>{{ tile.label }}<i v-if="tile.label==='待确认报价' && tile.value" class="attention-dot" /></span><strong>{{ tile.value }}</strong><small>{{ tile.note }}</small><button v-if="tile.label==='待确认报价' && tile.value" class="stat-action" @click="section='quotes'">去处理 →</button></article></div>
+          <div class="stat-grid"><article v-for="tile in tiles" :key="tile.label" class="stat-card" :class="{attention:tile.label==='待确认报价'}"><span>{{ tile.label }}<i v-if="tile.label==='待确认报价' && tile.value" class="attention-dot" /></span><strong>{{ tile.value }}</strong><small>{{ tile.note }}</small><button v-if="tile.label==='待确认报价' && tile.value" class="stat-action" @click="quoteSearch='';quoteStatus='pending';section='quotes'">去处理 →</button></article></div>
           <div class="overview-grid">
             <section class="panel task-panel"><div class="panel-heading"><h3>今天先处理这些</h3></div>
-              <div class="task-highlight"><span class="task-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h9l4 4v14H6z M14 3v5h5 M9 12h7 M9 16h5" /></svg></span><div><strong>{{ quotePendingTotal }}{{ quotePendingTotal ? ' 份报价等待确认' : '当前没有待确认报价' }}</strong><p>{{ quotePendingTotal ? '逐个产品核对所有数量档，再导出对外报价。' : '待确认报价会在提交后显示于此。' }}</p></div><el-button plain :disabled="!quotePendingTotal" @click="section='quotes'">查看待确认 <span aria-hidden="true">→</span></el-button></div>
+              <div class="task-highlight"><span class="task-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h9l4 4v14H6z M14 3v5h5 M9 12h7 M9 16h5" /></svg></span><div><strong>{{ quotePendingTotal }}{{ quotePendingTotal ? ' 份报价等待确认' : '当前没有待确认报价' }}</strong><p>{{ quotePendingTotal ? '逐个产品核对所有数量档，再导出对外报价。' : '待确认报价会在提交后显示于此。' }}</p></div><el-button plain :disabled="!quotePendingTotal" @click="quoteSearch='';quoteStatus='pending';section='quotes'">查看待确认 <span aria-hidden="true">→</span></el-button></div>
               <div class="task-bottom">报价按产品逐项确认，确认后可导出 Excel。</div>
             </section>
             <section class="panel shortcuts"><div class="panel-heading"><h3>常用入口</h3></div><div class="shortcut-grid"><button @click="section='products'"><strong>产品资料</strong><small>查商品、规格与组成</small><span aria-hidden="true">→</span></button><button v-if="navigation.some(entry=>entry.id==='pricing')" @click="section='pricing'"><strong>价格规则</strong><small>维护品牌阶梯价格</small><span aria-hidden="true">→</span></button><button @click="section='customers'"><strong>客户与品牌</strong><small>管理客户及品牌归属</small><span aria-hidden="true">→</span></button></div></section>
@@ -455,8 +487,8 @@ async function saveBom() {
         </template>
 
         <template v-else-if="section==='products'">
-          <div class="toolbar"><div><p class="section-lead">产品、配件和组合商品共用商品资料，并按规格分别报价。</p></div><div class="product-toolbar-actions"><el-input v-model="productSearch" clearable placeholder="搜索型号、名称、规格或备注" aria-label="搜索商品" /><el-button v-if="has('catalog:write')" type="primary" @click="openProduct">＋ 新增商品</el-button></div></div>
-          <section class="panel table-panel"><el-table :data="products" stripe class="product-table" style="width:100%" :row-class-name="({row}: AnyRow) => row.kind === 'bundle' ? '' : 'no-expand'">
+          <div class="toolbar"><div><p class="section-lead">产品、配件和组合商品共用商品资料，并按规格分别报价。</p></div><div class="product-toolbar-actions product-filter-actions"><el-select v-model="productKind" class="product-kind-filter" aria-label="按商品类型筛选"><el-option label="全部类型" value=""/><el-option label="标品" value="product"/><el-option label="配件" value="accessory"/><el-option label="组合商品" value="bundle"/></el-select><el-input v-model="productSearch" clearable placeholder="搜索型号、名称、规格或备注" aria-label="搜索商品" /><el-button v-if="has('catalog:write')" type="primary" @click="openProduct">＋ 新增商品</el-button></div></div>
+          <section class="panel table-panel"><el-table :data="products" stripe class="product-table" :empty-text="productSearch || productKind ? '没有匹配的商品' : '尚未录入商品'" style="width:100%" :row-class-name="({row}: AnyRow) => row.kind === 'bundle' ? '' : 'no-expand'">
             <el-table-column label="图片" width="78"><template #default="{row}"><el-image v-if="row.imagePath" :src="row.imagePath" :preview-src-list="[row.imagePath]" preview-teleported fit="contain" class="product-thumb" :alt="row.name" /><div v-else class="product-thumb placeholder">{{ row.name?.slice(0,1) }}</div></template></el-table-column>
             <el-table-column label="商品" min-width="180"><template #default="{row}"><div class="product-cell"><div><strong class="product-name" :title="row.name">{{ row.name }}</strong><small>{{ row.sku }}</small></div></div></template></el-table-column>
             <el-table-column label="类型" width="125"><template #default="{row}"><el-tag effect="plain">{{ kindLabel(row.kind) }}</el-tag></template></el-table-column>
@@ -487,8 +519,8 @@ async function saveBom() {
         </template>
 
         <template v-else-if="section==='quotes'">
-          <div class="toolbar"><p class="section-lead">查看报价单及其产品、价格与确认状态。</p><div class="product-toolbar-actions"><el-input v-model="quoteSearch" clearable placeholder="搜索单号、客户、品牌、型号或商品" aria-label="搜索客户报价" /><el-button v-if="has('quote:create')" type="primary" @click="openQuote">＋ 新建报价</el-button></div></div>
-          <section class="panel table-panel"><el-table :data="quotes" stripe class="quote-table" style="width:100%" v-loading="quotesLoading" :empty-text="quoteSearch ? '没有匹配的报价单' : '尚未创建报价单'">
+          <div class="toolbar"><p class="section-lead">查看报价单及其产品、价格与确认状态。</p><div class="product-toolbar-actions quote-toolbar-actions"><el-select v-model="quoteStatus" class="quote-status-filter" aria-label="按报价状态筛选"><el-option label="全部状态" value=""/><el-option label="草稿" value="draft"/><el-option label="待确认" value="pending"/><el-option label="已确认" value="confirmed"/><el-option label="已失效" value="void"/></el-select><el-input v-model="quoteSearch" clearable placeholder="搜索单号、客户、品牌、型号或商品" aria-label="搜索客户报价" /><el-button v-if="has('quote:create')" type="primary" @click="openQuote">＋ 新建报价</el-button></div></div>
+          <section class="panel table-panel"><el-table :data="quotes" stripe class="quote-table" style="width:100%" v-loading="quotesLoading" :empty-text="quoteSearch || quoteStatus ? '没有匹配的报价单' : '尚未创建报价单'">
             <el-table-column label="报价单号 / 日期" min-width="190"><template #default="{row}"><div class="quote-table-text"><strong class="quote-number" :title="row.quoteNumber">{{ row.quoteNumber }}</strong><small class="table-sub">{{ row.quoteDate }}</small></div></template></el-table-column>
             <el-table-column label="客户 / 品牌" min-width="170"><template #default="{row}"><div class="quote-table-text"><strong :title="row.customerSnapshot?.name">{{ row.customerSnapshot?.name }}</strong><small class="table-sub" :title="row.brandSnapshot?.name">{{ row.brandSnapshot?.name }}</small></div></template></el-table-column>
             <el-table-column label="报价类型" width="105"><template #default="{row}">{{ row.quoteType==='own'?'自有品牌':'客户贴牌' }}</template></el-table-column>
@@ -506,7 +538,7 @@ async function saveBom() {
       </div>
     </section>
 
-    <el-dialog v-model="showProduct" :title="editingProductId ? '编辑商品资料' : '新增商品资料'" width="720px">
+    <el-dialog v-model="showProduct" :title="editingProductId ? '编辑商品资料' : '新增商品资料'" width="720px" destroy-on-close @closed="imageFile=null">
       <el-form label-position="top">
         <div class="form-grid">
           <el-form-item label="货号 / 型号"><el-input v-model="productForm.sku" /></el-form-item>
@@ -515,7 +547,7 @@ async function saveBom() {
           <el-form-item v-if="editingProductId" label="商品状态"><el-checkbox v-model="productForm.active">启用（停用后不可用于新报价）</el-checkbox></el-form-item>
           <el-form-item label="规格" class="span-two"><el-input v-model="productForm.variants[0].specification" /></el-form-item>
           <el-form-item label="单位" class="span-two"><el-input v-model="productForm.variants[0].unit" placeholder="套、台、只" /></el-form-item>
-          <el-form-item label="图片（JPEG / PNG / WebP，最大 5 MB）" class="span-two"><input type="file" accept="image/jpeg,image/png,image/webp" @change="imageFile=($event.target as HTMLInputElement).files?.[0] || null" /></el-form-item>
+          <el-form-item label="图片（JPEG / PNG / WebP，最大 5 MB）" class="span-two"><div class="product-image-editor"><el-image v-if="productImagePreview" :src="productImagePreview" :preview-src-list="[productImagePreview]" preview-teleported fit="contain" class="product-edit-image" :alt="`${productForm.name || '商品'}图片预览`"><template #error><div class="product-edit-image-empty">图片加载失败</div></template></el-image><div v-else class="product-edit-image product-edit-image-empty">暂无图片</div><div class="product-image-controls"><div class="product-image-actions"><el-button @click="imageInput?.click()">{{ productImagePreview ? '替换图片' : '选择图片' }}</el-button><el-button v-if="productImagePreview" text type="danger" @click="removeProductImage">删除图片</el-button></div><input ref="imageInput" type="file" accept="image/jpeg,image/png,image/webp" aria-label="选择商品图片" class="product-image-file" @change="selectProductImage" /><small v-if="imageRemoved">图片已移除，保存后生效。</small><small v-else-if="imageFile">已选择新图片，保存后生效。</small><small v-else-if="productForm.imagePath">不选择新图片将保留当前图片。</small></div></div></el-form-item>
           <el-form-item label="备注" class="span-two"><el-input v-model="productForm.description" type="textarea" :rows="2" /></el-form-item>
         </div>
       </el-form>

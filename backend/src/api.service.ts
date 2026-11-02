@@ -40,6 +40,8 @@ export class ApiService {
     const page = Number(query.page || 1), size = Number(query.size || 10);
     if (!Number.isSafeInteger(page) || page < 1 || ![10, 20, 50].includes(size)) throw new BadRequestException('分页参数无效');
     const search = String(query.q || '').trim().slice(0, 100);
+    const kindFilter = query.kind || '';
+    if (kindFilter && !['product', 'accessory', 'bundle'].includes(kindFilter)) throw new BadRequestException('商品类型无效');
     const qb = this.repo(Product).createQueryBuilder('p');
     if (search) {
       const escaped = `%${search.replace(/[\\%_]/g, '\\$&')}%`;
@@ -47,6 +49,7 @@ export class ApiService {
       const variantSearch = qb.subQuery().select('1').from(ProductVariant, 'v').where('v.product_id = p.id').andWhere("(v.specification ILIKE :search ESCAPE '\\' OR v.unit ILIKE :search ESCAPE '\\')").getQuery();
       qb.where(`(p.sku ILIKE :search ESCAPE '\\' OR p.name ILIKE :search ESCAPE '\\' OR p.description ILIKE :search ESCAPE '\\' OR p.kind = :kind OR EXISTS ${variantSearch})`, { search: escaped, kind });
     }
+    if (kindFilter) qb.andWhere('p.kind = :kindFilter', { kindFilter });
     const [items, total] = await qb.orderBy('p.name', 'ASC').addOrderBy('p.id', 'ASC').skip((page - 1) * size).take(size).getManyAndCount();
     const activeCount = await this.repo(Product).countBy({ active: true });
     if (!items.length) return { items: [], total, activeCount };
@@ -462,6 +465,8 @@ export class ApiService {
     const page = Number(query.page || 1), size = Number(query.size || 10);
     if (!Number.isSafeInteger(page) || page < 1 || ![10, 20, 50].includes(size)) throw new BadRequestException('分页参数无效');
     const search = String(query.q || '').trim().slice(0, 100);
+    const statusFilter = query.status || '';
+    if (statusFilter && !['draft', 'pending', 'confirmed', 'void'].includes(statusFilter)) throw new BadRequestException('报价状态无效');
     const qb = this.repo(Quote).createQueryBuilder('q');
     if (search) {
       const value = `%${search.replace(/[\\%_]/g, '\\$&')}%`;
@@ -470,6 +475,7 @@ export class ApiService {
       const itemSearch = qb.subQuery().select('1').from(QuoteItem, 'i').where('i.quote_id = q.id').andWhere("(i.product_snapshot->>'sku' ILIKE :search ESCAPE '\\' OR i.product_snapshot->>'name' ILIKE :search ESCAPE '\\')").getQuery();
       qb.where(`(q.quote_number ILIKE :search ESCAPE '\\' OR q.customer_snapshot->>'name' ILIKE :search ESCAPE '\\' OR q.brand_snapshot->>'name' ILIKE :search ESCAPE '\\' OR q.status = :status OR q.quoteType = :quoteType OR EXISTS ${itemSearch})`, { search: value, status, quoteType });
     }
+    if (statusFilter) qb.andWhere('q.status = :statusFilter', { statusFilter });
     const [quotes, total] = await qb.orderBy('q.createdAt', 'DESC').addOrderBy('q.id', 'ASC').skip((page - 1) * size).take(size).getManyAndCount();
     if (!quotes.length) return { items: [], total };
     const items = await this.repo(QuoteItem).find({ where: { quoteId: In(quotes.map((q) => q.id)) } });

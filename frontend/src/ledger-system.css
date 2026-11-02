@@ -442,6 +442,18 @@ select:focus-visible,
   padding: 18px 22px 13px;
 }
 
+.settings-grid .role-row {
+  padding-inline: 22px;
+}
+
+.settings-grid > .panel > .el-form {
+  padding-inline: 22px;
+}
+
+.settings-grid .user-list > div {
+  padding-inline: 22px;
+}
+
 .panel-heading h3,
 .quick-panel h3 {
   margin: 0;
@@ -1191,6 +1203,12 @@ select:focus-visible,
     padding: 16px 16px 12px;
   }
 
+  .settings-grid .role-row,
+  .settings-grid > .panel > .el-form,
+  .settings-grid .user-list > div {
+    padding-inline: 16px;
+  }
+
   .recent-panel {
     padding-bottom: 8px;
   }
@@ -1363,3 +1381,24 @@ select:focus-visible,
   .retail-price-row { flex-wrap: wrap; }
   .retail-price-row > * { min-width: 0; }
 }
+
+.quote-toolbar-actions .quote-status-filter { width: 135px; flex: 0 0 135px; }
+@media (max-width: 760px) {
+  .quote-toolbar-actions .quote-status-filter { width: 100%; flex-basis: 100%; }
+}
+
+.product-filter-actions .product-kind-filter { width: 135px; flex: 0 0 135px; }
+@media (max-width: 760px) { .product-filter-actions .product-kind-filter { width: 100%; flex-basis: 100%; } }
+
+.product-image-editor { display: flex; align-items: center; gap: 16px; width: 100%; }
+.product-edit-image { width: 112px; height: 112px; flex: 0 0 112px; border: 1px solid var(--line); border-radius: 4px; background: #f7f6f1; }
+.product-edit-image-empty { display: grid; place-items: center; width: 100%; height: 100%; color: var(--muted); font-size: 12px; }
+.product-edit-image.product-edit-image-empty { width: 112px; height: 112px; }
+.product-image-controls { min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.product-image-controls input { max-width: 100%; }
+.product-image-controls small { color: var(--muted); font-size: 12px; line-height: 1.5; }
+@media (max-width: 500px) { .product-image-editor { align-items: flex-start; flex-direction: column; } }
+
+.product-image-actions { display: flex; align-items: center; gap: 8px; }
+.product-image-actions .el-button + .el-button { margin-left: 0; }
+.product-image-file { display: none; }
