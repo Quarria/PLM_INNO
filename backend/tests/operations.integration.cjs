@@ -52,6 +52,10 @@ async function main() {
   assert.ok(product.materialCode && bundle.materialCode);
   await request(`/products/${product.id}`, { sellingPoints: '' }, 200, 'PATCH');
   const store = await request('/operations/stores', { platform: '测试平台', name: '测试店铺' });
+  const editableStore = await request('/operations/stores', { platform: '测试平台', name: '临时店铺' });
+  const renamedStore = await request(`/operations/stores/${editableStore.id}`, { platform: '测试平台', name: '已修改店铺' }, 200, 'PATCH');
+  assert.equal(renamedStore.name, '已修改店铺');
+  await request(`/operations/stores/${editableStore.id}`, undefined, 200, 'DELETE');
   const warehouses = await request('/operations/warehouses');
   await request('/operations/catalog?q=TEST&page=1');
   await request(`/operations/catalog?id=${product.id}`);
@@ -60,6 +64,14 @@ async function main() {
   await request('/operations/receipts', { type: 'purchase', warehouse_id: warehouse, occurred_at: now, items: [{ product_id: product.id, batch_number: 'LOT-01', serial_numbers: ['0001'] }] }, 'reject');
   await request(`/products/${product.id}`, { materialCode: 'CHANGED' }, 'reject', 'PATCH');
   const campaign = await request('/operations/campaigns', { name: '测试大促', store_id: store.id, starts_at: new Date(Date.now() - 86400000).toISOString(), ends_at: new Date(Date.now() + 86400000).toISOString(), items: [{ product_id: product.id, list_price: '100.00', rules: [{ name: '店铺券', type: 'fixed', amount: '10.00', bearer: 'merchant' }, { name: '平台券', type: 'percent', amount: '10', bearer: 'platform' }] }] });
+  await request(`/operations/stores/${store.id}`, undefined, 'reject', 'DELETE');
+  const emptyCampaignBody = { name: '空活动', store_id: store.id, starts_at: new Date(Date.now() - 86400000).toISOString(), ends_at: new Date(Date.now() + 86400000).toISOString(), items: [] };
+  const emptyCampaign = await request('/operations/campaigns', emptyCampaignBody);
+  await request(`/operations/campaigns/${emptyCampaign.id}/publish`, {}, 'reject');
+  const withProduct = await request(`/operations/campaigns/${emptyCampaign.id}`, { ...emptyCampaignBody, version: emptyCampaign.version, items: [{ product_id: product.id, list_price: '99', rules: [] }] }, 200, 'PATCH');
+  assert.equal(withProduct.items.length, 1);
+  assert.equal((await request(`/operations/campaigns/${emptyCampaign.id}`)).items[0].sku, product.sku);
+  await request(`/operations/campaigns/${emptyCampaign.id}`, { ...emptyCampaignBody, version: emptyCampaign.version }, 'reject', 'PATCH');
   await request(`/operations/campaigns/${campaign.id}/publish`, {});
   await request('/operations/campaigns?q=测试&page=1&size=10');
   const preview = await request(`/operations/campaigns/${campaign.id}/preview`, { product_id: product.id, quantity: 1, rule_indexes: [0, 1] });

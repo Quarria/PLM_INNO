@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post, Query, Req } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Req } from '@nestjs/common';
 import { Request } from 'express';
 import { Permission } from './auth.guard';
 import { CommerceService } from './commerce.service';
@@ -10,9 +10,12 @@ export class CommerceController {
   constructor(private readonly commerce: CommerceService) {}
 
   @Get('stores') @Permission('operations:view') stores() { return this.commerce.listStores(); }
-  @Post('stores') @Permission('sales:write') createStore(@Body() body: any) { return this.commerce.createStore(body); }
+  @Post('stores') @Permission('campaign:write') createStore(@Body() body: any) { return this.commerce.createStore(body); }
+  @Patch('stores/:id') @Permission('campaign:write') updateStore(@Param('id') storeId: string, @Body() body: any) { return this.commerce.updateStore(storeId, body); }
+  @Delete('stores/:id') @Permission('campaign:write') deleteStore(@Param('id') storeId: string) { return this.commerce.deleteStore(storeId); }
 
   @Get('campaigns') @Permission('operations:view') campaigns(@Query() query: any) { return this.commerce.listCampaigns(query); }
+  @Get('campaigns/:id') @Permission('operations:view') campaign(@Param('id') id: string) { return this.commerce.getCampaign(id); }
   @Post('campaigns') @Permission('campaign:write') createCampaign(@Body() body: any) { return this.commerce.createCampaign(body); }
   @Patch('campaigns/:id') @Permission('campaign:write') editCampaign(@Param('id') id: string, @Body() body: any) { return this.commerce.editCampaign(id, body); }
   @Post('campaigns/:id/publish') @Permission('campaign:write') publishCampaign(@Param('id') id: string) { return this.commerce.setCampaignState(id, 'published'); }

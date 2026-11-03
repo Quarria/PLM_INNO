@@ -48,7 +48,32 @@ export class CommerceService {
   async createStore(body: any) {
     const platform = nonempty(body?.platform, 'platform'); const name = nonempty(body?.name, 'name');
     try { const [row] = await this.ops.db.query(`INSERT INTO ${this.stores}(platform,name) VALUES($1,$2) RETURNING id,platform,name`, [platform, name]); return row; }
-    catch (error: any) { if (error?.code === '23505') throw new ConflictException('该平台店铺已存在'); throw error; }
+    catch (error: any) { if ((error?.driverError?.code || error?.code) === '23505') throw new ConflictException('该平台店铺已存在'); throw error; }
+  }
+
+  async updateStore(storeId: string, body: any) {
+    const storeUuid = id(storeId, 'store_id');
+    const platform = nonempty(body?.platform, '平台名称'); const name = nonempty(body?.name, '店铺名称');
+    try {
+      const [returned] = await this.ops.db.query(`UPDATE ${this.stores} SET platform=$2,name=$3 WHERE id=$1 RETURNING id,platform,name`, [storeUuid, platform, name]);
+      const row = Array.isArray(returned) ? returned[0] : returned;
+      if (!row) throw new NotFoundException('店铺不存在');
+      return row;
+    } catch (error: any) { if ((error?.driverError?.code || error?.code) === '23505') throw new ConflictException('该平台店铺已存在'); throw error; }
+  }
+
+  async deleteStore(storeId: string) {
+    const storeUuid = id(storeId, 'store_id');
+    try {
+      return await this.ops.db.transaction(async (manager) => {
+        const [store] = await manager.query(`SELECT id FROM ${this.stores} WHERE id=$1 FOR UPDATE`, [storeUuid]);
+        if (!store) throw new NotFoundException('店铺不存在');
+        const [usage] = await manager.query(`SELECT EXISTS(SELECT 1 FROM ${this.campaigns} WHERE store_id=$1) OR EXISTS(SELECT 1 FROM ${this.orders} WHERE store_id=$1) AS used`, [storeUuid]);
+        if (usage.used) throw new ConflictException('该店铺已关联活动或销售订单，不能删除');
+        await manager.query(`DELETE FROM ${this.stores} WHERE id=$1`, [storeUuid]);
+        return { id: storeUuid };
+      });
+    } catch (error: any) { if ((error?.driverError?.code || error?.code) === '23503') throw new ConflictException('该店铺已关联活动或销售订单，不能删除'); throw error; }
   }
 
   async listCampaigns(query: any) {
@@ -58,6 +83,12 @@ export class CommerceService {
     const rows: Row[] = await this.ops.db.query(`SELECT c.*,s.name AS store_name ${base} ORDER BY c.updated_at DESC LIMIT $3 OFFSET $4`, [q, pattern, size, offset]);
     const items = await Promise.all(rows.map((row) => this.campaignView(row)));
     return { items, total: count.total };
+  }
+
+  async getCampaign(campaignId: string) {
+    const rows: Row[] = await this.ops.db.query(`SELECT c.*,s.name AS store_name FROM ${this.campaigns} c LEFT JOIN ${this.stores} s ON s.id=c.store_id WHERE c.id=$1`, [id(campaignId)]);
+    if (!rows.length) throw new NotFoundException('活动不存在');
+    return this.campaignView(rows[0]);
   }
 
   private async campaignView(row: Row) {
@@ -77,7 +108,7 @@ export class CommerceService {
   async createCampaign(body: any) { return this.saveCampaign(body); }
   async editCampaign(campaignId: string, body: any) { return this.saveCampaign(body, id(campaignId)); }
   private async saveCampaign(body: any, campaignId?: string) {
-    if (!body || !Array.isArray(body.items) || body.items.length === 0 || body.items.length > 500) throw new BadRequestException('活动必须包含 1 至 500 个商品');
+    if (!body || !Array.isArray(body.items) || body.items.length > 500) throw new BadRequestException('活动商品不能超过 500 个');
     const name = nonempty(body.name, 'name'); const storeId = body.store_id == null ? null : id(body.store_id, 'store_id');
     const startsAt = validDate(body.starts_at, 'starts_at'); const endsAt = validDate(body.ends_at, 'ends_at');
     if (Date.parse(endsAt) < Date.parse(startsAt)) throw new BadRequestException('活动结束时间不能早于开始时间');
@@ -106,6 +137,7 @@ export class CommerceService {
         const rows: Row[] = await manager.query(`SELECT * FROM ${this.campaigns} WHERE id=$1 FOR UPDATE`, [campaignId]);
         if (!rows.length) throw new NotFoundException('活动不存在'); campaign = rows[0];
         if (campaign.status === 'archived') throw new ConflictException('已归档活动不能修改');
+        if (body.version !== undefined && Number(body.version) !== Number(campaign.version)) throw new ConflictException('活动已被其他人修改，请刷新后重试');
         version = Number(campaign.version) + 1;
         await manager.query(`UPDATE ${this.campaigns} SET name=$2,store_id=$3,starts_at=$4,ends_at=$5,notes=$6,status='draft',version=$7,updated_at=now() WHERE id=$1`, [campaignId, name, storeId, startsAt, endsAt, notes, version]);
         await manager.query(`DELETE FROM ${this.items} WHERE campaign_id=$1`, [campaignId]);
@@ -129,6 +161,7 @@ export class CommerceService {
       const rows: Row[] = await manager.query(`SELECT * FROM ${this.campaigns} WHERE id=$1 FOR UPDATE`, [campaignUuid]);
       if (!rows.length) throw new NotFoundException('活动不存在'); const row = rows[0];
       if (state === 'published' && row.status === 'archived') throw new ConflictException('已归档活动不能发布');
+      if (state === 'published') { const [count] = await manager.query(`SELECT count(*)::int AS total FROM ${this.items} WHERE campaign_id=$1`, [campaignUuid]); if (!count.total) throw new BadRequestException('请先添加活动商品再发布'); }
       await manager.query(`UPDATE ${this.campaigns} SET status=$2,updated_at=now() WHERE id=$1`, [campaignUuid, state]);
       await manager.query(`UPDATE ${this.versions} SET status=$3 WHERE campaign_id=$1 AND version=$2`, [campaignUuid, row.version, state]);
       return { id: campaignUuid, status: state, version: row.version };
@@ -247,7 +280,7 @@ export class CommerceService {
       let order: Row;
       try {
         [order] = await manager.query(`INSERT INTO ${this.orders}(number,external_number,channel,store_id,customer_name,recipient_phone,shipping_address,ordered_at,original_amount,discount_amount,paid_amount,shipping_amount,discounts_complete,undisclosed_discount_amount,notes,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING *`, [orderNumber, externalNumber, channel, storeId, customerName, recipientPhone, shippingAddress, orderedAt, fromCents(totalOriginal), fromCents(discountTotal), paid.toFixed(2), shipping.toFixed(2), discountsComplete, fromCents(undisclosedDiscountCents), notes, actorId ?? null]);
-      } catch (error: any) { if (error?.code === '23505') throw new ConflictException('外部订单号在该店铺下已存在'); throw error; }
+      } catch (error: any) { if ((error?.driverError?.code || error?.code) === '23505') throw new ConflictException('外部订单号在该店铺下已存在'); throw error; }
       const lineIds: string[] = [];
       for (const item of cleanItems) {
         const prod = productRows.find((p) => p.id === item.product_id)!;
