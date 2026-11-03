@@ -83,10 +83,12 @@ export class ApiService {
     return { items: rows.slice(0, limit), hasMore: rows.length > limit };
   }
   async createProduct(body: any, actor: Actor) {
+    if (body.materialCode !== undefined && (typeof body.materialCode !== 'string' || !body.materialCode.trim() || body.materialCode.trim().length > 80)) throw new BadRequestException('物料编码须为1至80个字符');
     if (typeof body.sku !== 'string' || !body.sku.trim() || typeof body.name !== 'string' || !body.name.trim() || !['product', 'accessory', 'bundle'].includes(body.kind)) throw new BadRequestException('货号、品名和商品类型必填');
+    if (body.sellingPoints !== undefined && typeof body.sellingPoints !== 'string') throw new BadRequestException('商品卖点必须是文字');
     if (!Array.isArray(body.variants) || body.variants.length !== 1) throw new BadRequestException('商品须填写一个规格');
     return this.db.transaction(async (m) => {
-      const product = await m.getRepository(Product).save(m.getRepository(Product).create({ sku: body.sku.trim(), name: body.name.trim(), kind: body.kind, description: body.description || '' }));
+      const product = await m.getRepository(Product).save(m.getRepository(Product).create({ sku: body.sku.trim(), name: body.name.trim(), kind: body.kind, description: body.description || '', sellingPoints: body.sellingPoints || '', ...(body.materialCode ? { materialCode: body.materialCode.trim() } : {}) }));
       const variants = await m.getRepository(ProductVariant).save(body.variants.map((v: any) => {
         if (!v.specification?.trim() || !v.unit?.trim()) throw new BadRequestException('规格描述和单位必填');
         return m.getRepository(ProductVariant).create({ productId: product.id, specification: v.specification.trim(), unit: v.unit.trim() });
@@ -98,11 +100,20 @@ export class ApiService {
     });
   }
   async updateProduct(id: string, body: any, actor: Actor) {
+    if (body.sellingPoints !== undefined && typeof body.sellingPoints !== 'string') throw new BadRequestException('商品卖点必须是文字');
     return this.db.transaction(async (m) => {
       const productRepo = m.getRepository(Product);
       const variantRepo = m.getRepository(ProductVariant);
-      const product = await productRepo.findOneBy({ id });
+      const product = await productRepo.findOne({ where: { id }, lock: { mode: 'pessimistic_write' } });
       if (!product) throw new NotFoundException('未找到商品');
+      if (body.materialCode !== undefined && body.materialCode !== product.materialCode) {
+        if (typeof body.materialCode !== 'string' || !body.materialCode.trim() || body.materialCode.trim().length > 80) throw new BadRequestException('物料编码须为1至80个字符');
+        const schema = process.env.DB_SCHEMA || 'plm';
+        if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(schema)) throw new BadRequestException('数据库配置无效');
+        const used = await m.query(`SELECT 1 FROM "${schema}".ops_units WHERE product_id = $1 LIMIT 1`, [id]);
+        if (used.length) throw new BadRequestException('已有库存记录的商品不能修改物料编码');
+        product.materialCode = body.materialCode.trim();
+      }
       if (body.sku !== undefined) {
         if (typeof body.sku !== 'string' || !body.sku.trim()) throw new BadRequestException('货号必填');
         product.sku = body.sku.trim();
@@ -112,6 +123,7 @@ export class ApiService {
         product.name = body.name.trim();
       }
       if (body.description !== undefined) product.description = body.description;
+      if (body.sellingPoints !== undefined) product.sellingPoints = body.sellingPoints;
       if (body.imagePath !== undefined) product.imagePath = body.imagePath;
       if (body.active !== undefined) product.active = Boolean(body.active);
       if (body.variants !== undefined) {

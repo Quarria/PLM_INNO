@@ -8,6 +8,11 @@ import { ApiController } from './api.controller';
 import { ApiService } from './api.service';
 import { databaseConnectionConfig } from './database-config';
 import { AuthGuard } from './auth.guard';
+import { OpsDatabase } from './ops-database';
+import { InventoryController } from './inventory.controller';
+import { InventoryService } from './inventory.service';
+import { CommerceController } from './commerce.controller';
+import { CommerceService } from './commerce.service';
 
 @Module({
   imports: [
@@ -36,7 +41,7 @@ import { AuthGuard } from './auth.guard';
       }),
     }),
   ],
-  controllers: [ApiController],
-  providers: [ApiService, AuthGuard, { provide: APP_GUARD, useExisting: AuthGuard }],
+  controllers: [ApiController, InventoryController, CommerceController],
+  providers: [ApiService, OpsDatabase, InventoryService, CommerceService, AuthGuard, { provide: APP_GUARD, useExisting: AuthGuard }],
 })
 export class AppModule {}

@@ -2,11 +2,13 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import ProductSelect from './ProductSelect.vue'
+import OperationsWorkspace from './components/OperationsWorkspace.vue'
 
 type AnyRow = Record<string, any>
 const token = ref(localStorage.getItem('plm-token') || '')
 const me = ref<AnyRow | null>(null)
 const section = ref('overview')
+const operationsProductId = ref('')
 const loading = ref(false)
 const products = ref<AnyRow[]>([])
 const customers = ref<AnyRow[]>([])
@@ -70,7 +72,7 @@ watch(imageFile, (file, _previous, onCleanup) => {
   if (imagePreviewUrl.value) { const url = imagePreviewUrl.value; onCleanup(() => URL.revokeObjectURL(url)) }
 })
 
-const productForm = reactive({ sku: '', name: '', kind: 'product', description: '', imagePath: '', active: true, variants: [{ id: '', specification: '', unit: '套' }] as AnyRow[] })
+const productForm = reactive({ sku: '', materialCode: '', name: '', kind: 'product', description: '', sellingPoints: '', imagePath: '', active: true, variants: [{ id: '', specification: '', unit: '套' }] as AnyRow[] })
 const productImagePreview = computed(() => imagePreviewUrl.value || productForm.imagePath)
 const customerForm = reactive({ name: '', contact: '', phone: '', notes: '', active: true })
 const brandForm = reactive({ name: '', kind: 'own', customerId: '', active: true })
@@ -86,6 +88,10 @@ const permissions = [
   { key: 'cost:view', label: '查看采购价和财务成本' },
   { key: 'quote:create', label: '创建和提交报价' },
   { key: 'quote:confirm', label: '确认报价' },
+  { key: 'operations:view', label: '查看活动、销售与库存' },
+  { key: 'campaign:write', label: '维护电商活动与优惠' },
+  { key: 'sales:write', label: '维护销售订单和退款' },
+  { key: 'inventory:write', label: '维护库存出入库与套装' },
 ]
 const has = (permission: string) => !!me.value?.permissions?.includes('*') || !!me.value?.permissions?.includes(permission)
 const canManage = computed(() => has('price:manage'))
@@ -124,6 +130,9 @@ const navigation = computed(() => [
   { id: 'products', label: '产品资料', icon: navIcons.products },
   { id: 'customers', label: '客户与品牌', icon: navIcons.customers },
   { id: 'pricing', label: '价格规则', icon: navIcons.pricing, show: canManage.value || has('quote:create') },
+  { id: 'campaigns', label: '电商活动', icon: navIcons.pricing, show: has('operations:view') },
+  { id: 'sales', label: '销售订单', icon: navIcons.quotes, show: has('operations:view') },
+  { id: 'inventory', label: '库存与出入库', icon: navIcons.products, show: has('operations:view') },
 ].filter((entry) => entry.show !== false))
 const tiles = computed(() => [
   { label: '在售商品', value: activeProductCount.value, note: '按商品资料统计' },
@@ -225,8 +234,8 @@ onMounted(async () => {
   }
 })
 
-function openProduct() { imageRemoved.value = false; editingProductId.value = ''; Object.assign(productForm, { sku: '', name: '', kind: 'product', description: '', imagePath: '', active: true, variants: [{ id: '', specification: '', unit: '套' }] }); imageFile.value = null; showProduct.value = true }
-function editProduct(product: AnyRow) { imageRemoved.value = false; editingProductId.value = product.id; Object.assign(productForm, { sku: product.sku, name: product.name, kind: product.kind, description: product.description || '', imagePath: product.imagePath || '', active: product.active, variants: (product.variants || []).slice(0, 1).map((v: AnyRow) => ({ id: v.id, specification: v.specification, unit: v.unit })) }); imageFile.value = null; showProduct.value = true }
+function openProduct() { imageRemoved.value = false; editingProductId.value = ''; Object.assign(productForm, { sku: '', name: '', kind: 'product', description: '', sellingPoints: '', materialCode: '', imagePath: '', active: true, variants: [{ id: '', specification: '', unit: '套' }] }); imageFile.value = null; showProduct.value = true }
+function editProduct(product: AnyRow) { imageRemoved.value = false; editingProductId.value = product.id; Object.assign(productForm, { sku: product.sku, materialCode: product.materialCode || '', name: product.name, kind: product.kind, description: product.description || '', sellingPoints: product.sellingPoints || '', imagePath: product.imagePath || '', active: product.active, variants: (product.variants || []).slice(0, 1).map((v: AnyRow) => ({ id: v.id, specification: v.specification, unit: v.unit })) }); imageFile.value = null; showProduct.value = true }
 function selectProductImage(event: Event) {
   const input = event.target as HTMLInputElement
   const file = input.files?.[0]
@@ -254,7 +263,7 @@ async function uploadSelectedImage() {
 async function saveProduct() {
   try {
     const imagePath = await uploadSelectedImage()
-    const payload = { ...productForm, imagePath, variants: productForm.variants }
+    const payload = { ...productForm, materialCode: productForm.materialCode.trim() || undefined, imagePath, variants: productForm.variants }
     await api(editingProductId.value ? `/products/${editingProductId.value}` : '/products', { method: editingProductId.value ? 'PATCH' : 'POST', body: body(payload) })
     showProduct.value = false; await loadAll(); ElMessage.success('产品资料已保存')
   } catch (e) { notifyError(e) }
@@ -451,7 +460,7 @@ async function saveBom() {
     <aside class="sidebar">
       <div class="side-brand"><div class="brand-mark small">Y</div><div><strong>毅诺 PLM</strong><span>产品与报价管理</span></div></div>
       <div class="nav-caption">工作台</div>
-      <button v-for="entry in navigation" :key="entry.id" class="nav-item" :class="{active:section===entry.id}" :aria-current="section===entry.id ? 'page' : undefined" @click="section=entry.id">
+      <button v-for="entry in navigation" :key="entry.id" class="nav-item" :class="{active:section===entry.id}" :aria-current="section===entry.id ? 'page' : undefined" @click="operationsProductId='';section=entry.id">
         <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path :d="entry.icon" /></svg><span class="nav-label">{{ entry.label }}</span><span v-if="entry.id==='quotes' && quotePendingTotal > 0" class="nav-count">{{ quotePendingTotal }}</span>
       </button>
       <div v-if="canAdmin" class="nav-caption settings-caption">管理</div>
@@ -461,11 +470,12 @@ async function saveBom() {
 
     <section class="main-column">
       <header class="topbar">
-        <div><div class="crumb">PLM <span>/</span> {{ ({overview:'总览',products:'产品资料',customers:'客户与品牌',pricing:'价格规则',quotes:'客户报价',settings:'用户与权限'} as AnyRow)[section] }}</div><h2>{{ ({overview:'业务概览',products:'产品资料',customers:'客户与品牌',pricing:'阶梯价格规则',quotes:'报价单管理',settings:'用户与权限'} as AnyRow)[section] }}</h2></div>
+        <div><div class="crumb">PLM <span>/</span> {{ ({overview:'总览',products:'产品资料',customers:'客户与品牌',pricing:'价格规则',quotes:'客户报价',settings:'用户与权限',campaigns:'电商活动',sales:'销售订单',inventory:'库存与出入库'} as AnyRow)[section] }}</div><h2>{{ ({overview:'业务概览',products:'产品资料',customers:'客户与品牌',pricing:'阶梯价格规则',quotes:'报价单管理',settings:'用户与权限',campaigns:'电商活动',sales:'销售订单',inventory:'库存与出入库'} as AnyRow)[section] }}</h2></div>
         <div class="user-menu"><div class="avatar">{{ me.displayName?.slice(0,1) || 'U' }}</div><div><strong>{{ me.displayName }}</strong><span>{{ me.roles?.join(' · ') }}</span></div><el-button text @click="loadAll">刷新</el-button><el-button text @click="logout">退出</el-button></div>
       </header>
 
       <div class="page-content" v-loading="loading">
+        <OperationsWorkspace v-if="['campaigns','sales','inventory'].includes(section) && has('operations:view')" :key="section + operationsProductId" :section="section" :token="token" :permissions="me.permissions || []" :initial-product-id="operationsProductId" />
         <template v-if="section==='overview'">
           <div class="welcome-row"><div><h1>把每一份报价，做到心中有数。</h1><p>从待办开始，查看客户报价与业务资料。</p></div><el-button v-if="has('quote:create')" type="primary" size="large" @click="openQuote">＋ 新建报价</el-button></div>
           <div class="stat-grid"><article v-for="tile in tiles" :key="tile.label" class="stat-card" :class="{attention:tile.label==='待确认报价'}"><span>{{ tile.label }}<i v-if="tile.label==='待确认报价' && tile.value" class="attention-dot" /></span><strong>{{ tile.value }}</strong><small>{{ tile.note }}</small><button v-if="tile.label==='待确认报价' && tile.value" class="stat-action" @click="quoteSearch='';quoteStatus='pending';section='quotes'">去处理 →</button></article></div>
@@ -542,12 +552,14 @@ async function saveBom() {
       <el-form label-position="top">
         <div class="form-grid">
           <el-form-item label="货号 / 型号"><el-input v-model="productForm.sku" /></el-form-item>
+          <el-form-item label="物料编码"><el-input v-model="productForm.materialCode" placeholder="留空自动生成，首次入库后不可修改" maxlength="80" /></el-form-item>
           <el-form-item label="品名"><el-input v-model="productForm.name" /></el-form-item>
           <el-form-item v-if="!editingProductId" label="商品类型"><el-select v-model="productForm.kind" class="full"><el-option label="标品" value="product"/><el-option label="配件" value="accessory"/><el-option label="组合商品" value="bundle"/></el-select></el-form-item>
           <el-form-item v-if="editingProductId" label="商品状态"><el-checkbox v-model="productForm.active">启用（停用后不可用于新报价）</el-checkbox></el-form-item>
           <el-form-item label="规格" class="span-two"><el-input v-model="productForm.variants[0].specification" /></el-form-item>
           <el-form-item label="单位" class="span-two"><el-input v-model="productForm.variants[0].unit" placeholder="套、台、只" /></el-form-item>
           <el-form-item label="图片（JPEG / PNG / WebP，最大 5 MB）" class="span-two"><div class="product-image-editor"><el-image v-if="productImagePreview" :src="productImagePreview" :preview-src-list="[productImagePreview]" preview-teleported fit="contain" class="product-edit-image" :alt="`${productForm.name || '商品'}图片预览`"><template #error><div class="product-edit-image-empty">图片加载失败</div></template></el-image><div v-else class="product-edit-image product-edit-image-empty">暂无图片</div><div class="product-image-controls"><div class="product-image-actions"><el-button @click="imageInput?.click()">{{ productImagePreview ? '替换图片' : '选择图片' }}</el-button><el-button v-if="productImagePreview" text type="danger" @click="removeProductImage">删除图片</el-button></div><input ref="imageInput" type="file" accept="image/jpeg,image/png,image/webp" aria-label="选择商品图片" class="product-image-file" @change="selectProductImage" /><small v-if="imageRemoved">图片已移除，保存后生效。</small><small v-else-if="imageFile">已选择新图片，保存后生效。</small><small v-else-if="productForm.imagePath">不选择新图片将保留当前图片。</small></div></div></el-form-item>
+          <el-form-item label="卖点" class="span-two"><el-input v-model="productForm.sellingPoints" type="textarea" :rows="3" placeholder="请输入商品卖点" /></el-form-item>
           <el-form-item label="备注" class="span-two"><el-input v-model="productForm.description" type="textarea" :rows="2" /></el-form-item>
         </div>
       </el-form>
@@ -563,8 +575,11 @@ async function saveBom() {
     </el-dialog>
     <el-drawer :model-value="!!detailProduct" title="商品详情" size="min(620px, 95%)" @close="detailProduct=null">
       <template v-if="detailProduct">
+        <p>物料编码：{{ detailProduct.materialCode || '未生成' }}</p>
+        <el-button v-if="has('operations:view')" @click="operationsProductId=detailProduct.id;section='inventory';detailProduct=null">查看库存与追溯</el-button>
         <div class="product-detail-header"><el-image v-if="detailProduct.imagePath" :src="detailProduct.imagePath" :preview-src-list="[detailProduct.imagePath]" preview-teleported fit="contain" class="product-detail-image" :alt="detailProduct.name" /><div v-else class="product-detail-image placeholder">暂无图片</div><div><h3>{{ detailProduct.name }}</h3><p>{{ detailProduct.sku }}</p><el-tag effect="plain">{{ kindLabel(detailProduct.kind) }}</el-tag> <el-tag :type="detailProduct.active ? 'success' : 'info'" effect="plain">{{ detailProduct.active ? '启用' : '失效' }}</el-tag></div></div>
         <section v-for="v in detailProduct.variants" :key="v.id" class="product-detail-section"><h4>规格与单位</h4><p class="product-detail-text">{{ v.specification || '未填写' }}</p><p>单位：{{ v.unit || '未填写' }}</p><template v-if="has('cost:view') || has('price:manage')"><p>采购基准价（含税）：{{ priceLabel(basePrices.find(x=>x.variantId===v.id)?.purchasePrice) }}</p><p>标准市场零售价：{{ priceLabel(basePrices.find(x=>x.variantId===v.id)?.standardRetailPrice) }}</p></template></section>
+        <section class="product-detail-section"><h4>卖点</h4><p class="product-detail-text">{{ detailProduct.sellingPoints || '未填写' }}</p></section>
         <section class="product-detail-section"><h4>备注</h4><p class="product-detail-text">{{ detailProduct.description || '未填写' }}</p></section>
         <section v-if="detailProduct.kind==='bundle'" class="product-detail-section"><h4>组成</h4><p v-for="c in detailProduct.components" :key="c.id">{{ c.componentSku || '—' }} · {{ c.componentName || '未知商品' }} × {{ c.quantity }}</p><p v-if="!detailProduct.components?.length">尚未维护组成</p></section>
       </template>

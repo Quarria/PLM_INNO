@@ -28,10 +28,12 @@ export class User {
 @Entity('products')
 export class Product {
   @PrimaryGeneratedColumn('uuid') id!: string;
+  @Column({ name: 'material_code', type: 'varchar', length: 80, unique: true, default: () => "('WL-' || substr(replace(gen_random_uuid()::text, '-', ''), 1, 16))" }) materialCode!: string;
   @Column({ unique: true }) sku!: string;
   @Column() name!: string;
   @Column({ type: 'varchar' }) kind!: 'product' | 'accessory' | 'bundle';
   @Column({ type: 'text', default: '' }) description!: string;
+  @Column({ name: 'selling_points', type: 'text', default: '' }) sellingPoints!: string;
   @Column({ type: 'text', nullable: true }) imagePath!: string | null;
   @Column({ type: 'boolean', default: true }) active!: boolean;
   @CreateDateColumn({ type: 'timestamptz' }) createdAt!: Date;
