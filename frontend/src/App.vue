@@ -3,12 +3,14 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import ProductSelect from './ProductSelect.vue'
 import OperationsWorkspace from './components/OperationsWorkspace.vue'
+import OpportunityWorkspace from './components/opportunities/OpportunityWorkspace.vue'
 
 type AnyRow = Record<string, any>
 const token = ref(localStorage.getItem('plm-token') || '')
 const me = ref<AnyRow | null>(null)
 const section = ref('overview')
 const operationsProductId = ref('')
+const opportunityRefreshKey = ref(0)
 const loading = ref(false)
 const products = ref<AnyRow[]>([])
 const customers = ref<AnyRow[]>([])
@@ -40,6 +42,8 @@ const basePrices = ref<AnyRow[]>([])
 const roles = ref<AnyRow[]>([])
 const users = ref<AnyRow[]>([])
 const loginForm = reactive({ username: '', password: '' })
+const brandLogos = reactive<{login:number|null;sidebar:number|null}>({login:null,sidebar:null})
+const logoUploading = ref('')
 const showProduct = ref(false)
 const productSearch = ref('')
 const productKind = ref('')
@@ -92,8 +96,20 @@ const permissions = [
   { key: 'campaign:write', label: '维护电商活动与优惠' },
   { key: 'sales:write', label: '维护销售订单和退款' },
   { key: 'inventory:write', label: '维护库存出入库与套装' },
+  { key: 'opportunity:view', label: '查看商机与节点单据' },
+  { key: 'opportunity:create', label: '创建商机' },
+  { key: 'opportunity:write', label: '维护本人负责的商机' },
+  { key: 'opportunity:manage', label: '管理全部商机与转交负责人' },
 ]
 const has = (permission: string) => !!me.value?.permissions?.includes('*') || !!me.value?.permissions?.includes(permission)
+function restoreOpportunityLocation() {
+  if (/^#opportunity=[0-9a-f-]{36}$/i.test(window.location.hash) && has('opportunity:view')) section.value = 'opportunities'
+}
+watch(section, (value) => {
+  if (value !== 'opportunities' && window.location.hash.startsWith('#opportunity=')) {
+    history.replaceState(null, '', window.location.pathname + window.location.search)
+  }
+})
 const canManage = computed(() => has('price:manage'))
 const canConfirm = computed(() => has('quote:confirm'))
 const canAdmin = computed(() => me.value?.roles?.includes('admin'))
@@ -127,6 +143,7 @@ const navIcons: Record<string, string> = {
 const navigation = computed(() => [
   { id: 'overview', label: '工作台', icon: navIcons.overview },
   { id: 'quotes', label: '客户报价', icon: navIcons.quotes },
+  { id: 'opportunities', label: '商机管理', icon: navIcons.pricing, show: has('opportunity:view') },
   { id: 'products', label: '产品资料', icon: navIcons.products },
   { id: 'customers', label: '客户与品牌', icon: navIcons.customers },
   { id: 'pricing', label: '价格规则', icon: navIcons.pricing, show: canManage.value || has('quote:create') },
@@ -155,10 +172,20 @@ async function api<T = any>(path: string, options: RequestInit = {}): Promise<T>
 }
 const body = (value: unknown) => JSON.stringify(value)
 function notifyError(error: unknown) { ElMessage.error(error instanceof Error ? error.message : '操作失败') }
+function logoUrl(area: 'login'|'sidebar') { return brandLogos[area] ? `/api/branding/${area}/image?v=${brandLogos[area]}` : '' }
+async function uploadLogo(area: 'login'|'sidebar', event: Event) {
+  const input = event.target as HTMLInputElement; const file = input.files?.[0]
+  if (!file) return
+  if (!['image/png','image/jpeg','image/webp'].includes(file.type) || file.size > 5 * 1024 * 1024) { ElMessage.error('请选择不超过 5 MB 的 PNG、JPEG 或 WebP 图片'); input.value=''; return }
+  const data = new FormData(); data.append('file', file); logoUploading.value=area
+  try { const result = await api<{version:number}>(`/admin/branding/${area}`, {method:'POST', body:data}); brandLogos[area]=result.version; ElMessage.success('Logo 已更新') }
+  catch (e) { notifyError(e) } finally { logoUploading.value=''; input.value='' }
+}
 async function login() {
   try {
     const result = await api<any>('/auth/login', { method: 'POST', body: body(loginForm) })
     token.value = result.accessToken; localStorage.setItem('plm-token', token.value); me.value = result.user
+    restoreOpportunityLocation()
     await loadAll(); ElMessage.success('登录成功')
   } catch (e) { notifyError(e) }
 }
@@ -228,8 +255,9 @@ async function loadAll() {
   } catch (e) { notifyError(e) } finally { loading.value = false }
 }
 onMounted(async () => {
+  try { Object.assign(brandLogos, await api('/branding')) } catch { /* 保留默认标识 */ }
   if (token.value) {
-    try { me.value = await api('/auth/me'); await loadAll() }
+    try { me.value = await api('/auth/me'); restoreOpportunityLocation(); await loadAll() }
     catch (e) { logout(); notifyError(e) }
   }
 })
@@ -443,7 +471,7 @@ async function saveBom() {
 <template>
   <main v-if="!token || !me" class="login-shell">
     <section class="login-card">
-      <div class="brand-mark">Y</div>
+      <div class="brand-mark" :class="{'has-logo':logoUrl('login')}"><img v-if="logoUrl('login')" :src="logoUrl('login')" alt="登录页 Logo" /><template v-else>Y</template></div>
       <div class="eyebrow">PRODUCT · PRICE · QUOTE</div>
       <h1>产品与报价管理</h1>
       <p class="muted">统一产品资料，按规则生成报价，并由负责人逐项确认。</p>
@@ -458,7 +486,7 @@ async function saveBom() {
 
   <div v-else class="app-shell">
     <aside class="sidebar">
-      <div class="side-brand"><div class="brand-mark small">Y</div><div><strong>毅诺 PLM</strong><span>产品与报价管理</span></div></div>
+      <div class="side-brand" :class="{'with-logo':logoUrl('sidebar')}"><div class="brand-mark small" :class="{'has-logo':logoUrl('sidebar')}"><img v-if="logoUrl('sidebar')" :src="logoUrl('sidebar')" alt="系统 Logo" /><template v-else>Y</template></div><div><strong v-if="!logoUrl('sidebar')">毅诺 PLM</strong><span>产品与报价管理</span></div></div>
       <div class="nav-caption">工作台</div>
       <button v-for="entry in navigation" :key="entry.id" class="nav-item" :class="{active:section===entry.id}" :aria-current="section===entry.id ? 'page' : undefined" @click="operationsProductId='';section=entry.id">
         <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path :d="entry.icon" /></svg><span class="nav-label">{{ entry.label }}</span><span v-if="entry.id==='quotes' && quotePendingTotal > 0" class="nav-count">{{ quotePendingTotal }}</span>
@@ -470,11 +498,12 @@ async function saveBom() {
 
     <section class="main-column">
       <header class="topbar">
-        <div><div class="crumb">PLM <span>/</span> {{ ({overview:'总览',products:'产品资料',customers:'客户与品牌',pricing:'价格规则',quotes:'客户报价',settings:'用户与权限',campaigns:'电商活动',sales:'销售订单',inventory:'库存与出入库'} as AnyRow)[section] }}</div><h2>{{ ({overview:'业务概览',products:'产品资料',customers:'客户与品牌',pricing:'阶梯价格规则',quotes:'报价单管理',settings:'用户与权限',campaigns:'电商活动',sales:'销售订单',inventory:'库存与出入库'} as AnyRow)[section] }}</h2></div>
-        <div class="user-menu"><div class="avatar">{{ me.displayName?.slice(0,1) || 'U' }}</div><div><strong>{{ me.displayName }}</strong><span>{{ me.roles?.join(' · ') }}</span></div><el-button text @click="loadAll">刷新</el-button><el-button text @click="logout">退出</el-button></div>
+        <div><div class="crumb">PLM <span>/</span> {{ ({overview:'总览',products:'产品资料',customers:'客户与品牌',pricing:'价格规则',quotes:'客户报价',opportunities:'商机管理',settings:'用户与权限',campaigns:'电商活动',sales:'销售订单',inventory:'库存与出入库'} as AnyRow)[section] }}</div><h2>{{ ({overview:'业务概览',products:'产品资料',customers:'客户与品牌',pricing:'阶梯价格规则',quotes:'报价单管理',opportunities:'商机管理',settings:'用户与权限',campaigns:'电商活动',sales:'销售订单',inventory:'库存与出入库'} as AnyRow)[section] }}</h2></div>
+        <div class="user-menu"><div class="avatar">{{ me.displayName?.slice(0,1) || 'U' }}</div><div><strong>{{ me.displayName }}</strong><span>{{ me.roles?.join(' · ') }}</span></div><el-button text @click="opportunityRefreshKey++;loadAll()">刷新</el-button><el-button text @click="logout">退出</el-button></div>
       </header>
 
       <div class="page-content" v-loading="loading">
+        <OpportunityWorkspace v-if="section==='opportunities' && has('opportunity:view')" :key="opportunityRefreshKey" :token="token" :permissions="me.permissions || []" :user-id="me.id" />
         <OperationsWorkspace v-if="['campaigns','sales','inventory'].includes(section) && has('operations:view')" :key="section + operationsProductId" :section="section" :token="token" :permissions="me.permissions || []" :initial-product-id="operationsProductId" />
         <template v-if="section==='overview'">
           <div class="welcome-row"><div><h1>把每一份报价，做到心中有数。</h1><p>从待办开始，查看客户报价与业务资料。</p></div><el-button v-if="has('quote:create')" type="primary" size="large" @click="openQuote">＋ 新建报价</el-button></div>
@@ -542,6 +571,7 @@ async function saveBom() {
         </template>
 
         <template v-else-if="section==='settings' && canAdmin">
+          <section class="panel logo-settings"><div class="panel-heading"><div><div class="eyebrow">BRANDING</div><h3>系统 Logo</h3></div></div><div class="logo-settings-content"><div v-for="item in ([{area:'login',label:'登录页 Logo'},{area:'sidebar',label:'系统左上角 Logo'}] as const)" :key="item.area" class="logo-setting"><div class="logo-setting-preview"><img v-if="logoUrl(item.area)" :src="logoUrl(item.area)" :alt="item.label"/><span v-else>Y</span></div><div><strong>{{ item.label }}</strong><p>支持 PNG、JPEG、WebP，最大 5 MB</p><label class="logo-upload">{{ logoUploading===item.area?'上传中…':'选择图片并上传' }}<input type="file" accept="image/png,image/jpeg,image/webp" :disabled="!!logoUploading" @change="uploadLogo(item.area,$event)"/></label></div></div></div></section>
           <div class="settings-grid"><section class="panel"><div class="panel-heading"><div><div class="eyebrow">ACCESS CONTROL</div><h3>角色权限</h3></div></div><article v-for="role in roles" :key="role.id" class="role-row"><div class="role-head"><strong>{{ role.label }}</strong><span>{{ role.name }}</span></div><el-checkbox-group v-model="role.permissions"><el-checkbox v-for="perm in permissions" :key="perm.key" :label="perm.key">{{ perm.label }}</el-checkbox><el-checkbox label="*">全部权限</el-checkbox></el-checkbox-group><el-button size="small" type="primary" @click="updateRole(role)">保存 {{ role.label }} 权限</el-button></article></section>
             <section class="panel"><div class="panel-heading"><div><div class="eyebrow">TEAM</div><h3>新增用户</h3></div></div><el-form label-position="top"><el-form-item label="登录账号"><el-input v-model="userForm.username" /></el-form-item><el-form-item label="姓名"><el-input v-model="userForm.displayName" /></el-form-item><el-form-item label="初始密码（至少 12 位）"><el-input v-model="userForm.password" type="password" show-password /></el-form-item><el-form-item label="分配角色"><el-select v-model="userForm.roleIds" multiple class="full"><el-option v-for="r in roles" :key="r.id" :label="r.label" :value="r.id" /></el-select></el-form-item><el-button type="primary" @click="createUser">创建用户</el-button></el-form><div class="user-list"><div v-for="u in users" :key="u.id"><strong>{{ u.displayName }}</strong><span>{{ u.username }} · {{ u.roles?.map((r:any)=>r.label).join('、') }}</span></div></div></section></div>
         </template>

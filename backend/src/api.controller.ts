@@ -4,7 +4,8 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
 import { join } from 'node:path';
-import { mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { Request, Response } from 'express';
 import { BadRequestException } from '@nestjs/common';
 import { ApiService } from './api.service';
@@ -16,6 +17,36 @@ const actor = (req: AuthedRequest) => ({ id: req.user.sub, username: req.user.us
 @Controller()
 export class ApiController {
   constructor(private api: ApiService) {}
+
+  private logoFile(area: string) {
+    if (!['login', 'sidebar'].includes(area)) throw new BadRequestException('Logo 位置无效');
+    return join(process.env.MEDIA_DIR || join(process.cwd(), 'data', 'media'), `branding-${area}.image`);
+  }
+  private logoType(data: Buffer) {
+    if (data.length >= 8 && data.subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10]))) return 'image/png';
+    if (data.length >= 3 && data[0] === 0xff && data[1] === 0xd8 && data[2] === 0xff) return 'image/jpeg';
+    if (data.length >= 12 && data.toString('ascii', 0, 4) === 'RIFF' && data.toString('ascii', 8, 12) === 'WEBP') return 'image/webp';
+    return '';
+  }
+  @Public() @Get('branding') branding() {
+    return Object.fromEntries(['login', 'sidebar'].map(area => { const file = this.logoFile(area); return [area, existsSync(file) ? statSync(file).mtimeMs : null]; }));
+  }
+  @Public() @Get('branding/:area/image') logo(@Param('area') area: string, @Res() res: Response) {
+    const file = this.logoFile(area);
+    if (!existsSync(file)) return res.sendStatus(404);
+    const data = readFileSync(file); const type = this.logoType(data);
+    if (!type) return res.sendStatus(404);
+    res.setHeader('Cache-Control', 'no-store'); res.setHeader('X-Content-Type-Options', 'nosniff'); return res.type(type).send(data);
+  }
+  @Roles('admin') @Post('admin/branding/:area') @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 5 * 1024 * 1024 } }))
+  uploadLogo(@Param('area') area: string, @UploadedFile() file: Express.Multer.File) {
+    const target = this.logoFile(area);
+    if (!file?.buffer || !this.logoType(file.buffer)) throw new BadRequestException('请选择不超过 5 MB 的 PNG、JPEG 或 WebP 图片');
+    mkdirSync(join(process.env.MEDIA_DIR || join(process.cwd(), 'data', 'media')), { recursive: true });
+    const temporary = `${target}.${randomUUID()}.tmp`;
+    writeFileSync(temporary, file.buffer); renameSync(temporary, target);
+    return { version: statSync(target).mtimeMs };
+  }
 
   @Public() @Get('health') health() { return this.api.health(); }
   @Public() @Post('auth/login') login(@Body() body: any) { return this.api.login(String(body.username || ''), String(body.password || '')); }

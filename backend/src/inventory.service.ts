@@ -46,12 +46,12 @@ export class InventoryService {
     const reservedOrder = query.reserved_order_id ? uuid(query.reserved_order_id, '预留订单') : null;
     const dispatchOrder = query.dispatch_order_id ? uuid(query.dispatch_order_id, '出库订单') : null;
     const status = query.status ? text(query.status, '状态', false, 24) : null;
-    if (status && !['available','reserved','pending','borrowed','shipped','assembled','disassembled','scrapped','dispatchable'].includes(status)) throw new BadRequestException('库存状态无效');
+    if (status && !['available','reserved','pending','borrowed','shipped','assembled','disassembled','scrapped','dispatchable','traceability_pending'].includes(status)) throw new BadRequestException('库存状态无效');
     if (status === 'dispatchable' && !dispatchOrder) throw new BadRequestException('查询待发实物必须选择销售订单');
     const args = [product, status, warehouse, q, reservedOrder, dispatchOrder];
     const from = ` FROM ${this.t('ops_units')} u JOIN ${this.t('products')} p ON p.id=u.product_id LEFT JOIN ${this.t('ops_warehouses')} w ON w.id=u.warehouse_id
       WHERE ($1::uuid IS NULL OR u.product_id=$1)
-      AND ($2::text IS NULL OR u.status=$2 OR ($2='dispatchable' AND (u.status='available' OR (u.status='reserved' AND u.reserved_order_id=$6::uuid))))
+      AND ($2::text IS NULL OR u.status=$2 OR ($2='dispatchable' AND (u.status='available' OR (u.status='reserved' AND u.reserved_order_id=$6::uuid))) OR ($2='traceability_pending' AND u.traceability_pending=true))
       AND ($3::uuid IS NULL OR u.warehouse_id=$3)
       AND ($4='' OR u.serial_number ILIKE '%'||$4||'%' OR u.batch_number ILIKE '%'||$4||'%' OR p.sku ILIKE '%'||$4||'%' OR p.name ILIKE '%'||$4||'%' OR COALESCE(p.material_code,'') ILIKE '%'||$4||'%')
       AND ($5::uuid IS NULL OR u.reserved_order_id=$5)`;
@@ -61,9 +61,11 @@ export class InventoryService {
   }
   async movements(query: any) {
     const p = pageParams(query); const q = literalLike(text(query.q, '搜索词'));
-    const filter = ` WHERE ($1='' OR m.number ILIKE '%'||$1||'%' OR m.recipient ILIKE '%'||$1||'%' OR m.reason ILIKE '%'||$1||'%' OR m.tracking_number ILIKE '%'||$1||'%')`;
-    const [count] = await this.ops.db.query(`SELECT count(*)::int total FROM ${this.t('ops_movements')} m${filter}`, [q]);
-    const heads = await this.ops.db.query(`SELECT m.* FROM ${this.t('ops_movements')} m${filter} ORDER BY m.occurred_at DESC,m.created_at DESC LIMIT $2 OFFSET $3`, [q,p.size,p.offset]);
+    const type = query.type ? text(query.type, '类型', false, 24) : null;
+    if (type && !['purchase','initial','return','borrow_return','sale','sample','borrow','internal','scrap','assembly','disassembly','inspection','bundle_components','reservation','release'].includes(type)) throw new BadRequestException('出入库类型无效');
+    const filter = ` WHERE ($1='' OR m.number ILIKE '%'||$1||'%' OR m.recipient ILIKE '%'||$1||'%' OR m.reason ILIKE '%'||$1||'%' OR m.tracking_number ILIKE '%'||$1||'%') AND ($2::text IS NULL OR m.type=$2)`;
+    const [count] = await this.ops.db.query(`SELECT count(*)::int total FROM ${this.t('ops_movements')} m${filter}`, [q,type]);
+    const heads = await this.ops.db.query(`SELECT m.* FROM ${this.t('ops_movements')} m${filter} ORDER BY m.occurred_at DESC,m.created_at DESC LIMIT $3 OFFSET $4`, [q,type,p.size,p.offset]);
     if (!heads.length) return { items: [], total: count.total };
     const details = await this.ops.db.query(`SELECT i.movement_id,i.unit_id,i.product_id,p.sku,p.name,u.serial_number,i.batch_number,i.from_status,i.to_status,i.source_movement_item_id FROM ${this.t('ops_movement_items')} i JOIN ${this.t('products')} p ON p.id=i.product_id JOIN ${this.t('ops_units')} u ON u.id=i.unit_id WHERE i.movement_id=ANY($1::uuid[]) ORDER BY i.created_at,i.id`, [heads.map((x: any) => x.id)]);
     const groups = new Map<string,any[]>(); for (const d of details) { const a=groups.get(d.movement_id)||[]; a.push(d); groups.set(d.movement_id,a); }

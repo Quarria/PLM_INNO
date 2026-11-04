@@ -176,3 +176,94 @@ export class AuditLog {
   @Column({ type: 'jsonb', default: {} }) detail!: Record<string, unknown>;
   @CreateDateColumn({ type: 'timestamptz' }) createdAt!: Date;
 }
+
+@Entity('opportunities')
+export class Opportunity {
+  @PrimaryGeneratedColumn('uuid') id!: string;
+  @Column({ unique: true }) number!: string;
+  @Column() name!: string;
+  @Column({ name: 'customer_id', type: 'uuid' }) customerId!: string;
+  @Column({ name: 'owner_id', type: 'uuid' }) ownerId!: string;
+  @Column({ name: 'created_by', type: 'uuid' }) createdBy!: string;
+  @Column({ type: 'text', default: '' }) description!: string;
+  @Column({ type: 'varchar', default: 'in_progress' }) status!: 'in_progress' | 'completed' | 'terminated';
+  @Column({ name: 'current_stage_run_id', type: 'uuid', nullable: true }) currentStageRunId!: string | null;
+  @Column({ type: 'int', default: 1 }) version!: number;
+  @Column({ name: 'expected_amount', type: 'numeric', precision: 14, scale: 2, nullable: true }) expectedAmount!: string | null;
+  @Column({ name: 'expected_completion_date', type: 'date', nullable: true }) expectedCompletionDate!: string | null;
+  @Column({ name: 'termination_reason', type: 'text', nullable: true }) terminationReason!: string | null;
+  @Column({ name: 'completed_at', type: 'timestamptz', nullable: true }) completedAt!: Date | null;
+  @CreateDateColumn({ name: 'created_at', type: 'timestamptz' }) createdAt!: Date;
+  @UpdateDateColumn({ name: 'updated_at', type: 'timestamptz' }) updatedAt!: Date;
+}
+
+@Entity('opportunity_stage_runs')
+export class OpportunityStageRun {
+  @PrimaryGeneratedColumn('uuid') id!: string;
+  @Column({ name: 'opportunity_id', type: 'uuid' }) opportunityId!: string;
+  @Column() stage!: string;
+  @Column({ type: 'int' }) round!: number;
+  @Column({ name: 'entered_at', type: 'timestamptz' }) enteredAt!: Date;
+  @Column({ name: 'exited_at', type: 'timestamptz', nullable: true }) exitedAt!: Date | null;
+  @Column({ type: 'varchar', nullable: true }) result!: string | null;
+  @Column({ name: 'previous_run_id', type: 'uuid', nullable: true }) previousRunId!: string | null;
+}
+
+@Entity('opportunity_items')
+export class OpportunityItem {
+  @PrimaryGeneratedColumn('uuid') id!: string;
+  @Column({ name: 'opportunity_id', type: 'uuid' }) opportunityId!: string;
+  @Column({ name: 'variant_id', type: 'uuid' }) variantId!: string;
+  @Column({ type: 'jsonb', default: '{}' }) snapshot!: Record<string, unknown>;
+}
+
+@Entity('opportunity_documents')
+export class OpportunityDocument {
+  @PrimaryGeneratedColumn('uuid') id!: string;
+  @Column({ name: 'opportunity_id', type: 'uuid' }) opportunityId!: string;
+  @Column({ name: 'stage_run_id', type: 'uuid' }) stageRunId!: string;
+  @Column() name!: string;
+  @Column() type!: string;
+  @Column({ name: 'business_date', type: 'date' }) businessDate!: string;
+  @Column({ type: 'text', default: '' }) description!: string;
+  @Column({ name: 'extra_data', type: 'jsonb', default: '{}' }) extraData!: Record<string, unknown>;
+  @Column({ name: 'created_by', type: 'uuid' }) createdBy!: string;
+  @Column({ name: 'is_void', default: false }) isVoid!: boolean;
+  @Column({ name: 'void_reason', type: 'text', nullable: true }) voidReason!: string | null;
+  @CreateDateColumn({ name: 'created_at', type: 'timestamptz' }) createdAt!: Date;
+}
+
+@Entity('opportunity_attachments')
+export class OpportunityAttachment {
+  @PrimaryGeneratedColumn('uuid') id!: string;
+  @Column({ name: 'opportunity_id', type: 'uuid' }) opportunityId!: string;
+  @Column({ name: 'document_id', type: 'uuid', nullable: true }) documentId!: string | null;
+  @Column({ name: 'storage_key' }) storageKey!: string;
+  @Column({ name: 'file_name' }) fileName!: string;
+  @Column({ name: 'mime_type' }) mimeType!: string;
+  @Column({ type: 'bigint' }) size!: string;
+  @Column() sha256!: string;
+  @Column({ name: 'uploaded_by', type: 'uuid' }) uploadedBy!: string;
+  @CreateDateColumn({ name: 'created_at', type: 'timestamptz' }) createdAt!: Date;
+}
+
+@Entity('opportunity_quote_links')
+export class OpportunityQuoteLink {
+  @PrimaryGeneratedColumn('uuid') id!: string;
+  @Column({ name: 'opportunity_id', type: 'uuid' }) opportunityId!: string;
+  @Column({ name: 'quote_id', type: 'uuid' }) quoteId!: string;
+}
+
+@Entity('opportunity_events')
+export class OpportunityEvent {
+  @PrimaryGeneratedColumn('uuid') id!: string;
+  @Column({ name: 'opportunity_id', type: 'uuid' }) opportunityId!: string;
+  @Column() action!: string;
+  @Column({ name: 'from_run_id', type: 'uuid', nullable: true }) fromRunId!: string | null;
+  @Column({ name: 'to_run_id', type: 'uuid', nullable: true }) toRunId!: string | null;
+  @Column({ name: 'actor_id', type: 'uuid' }) actorId!: string;
+  @Column({ type: 'text', default: '' }) reason!: string;
+  @Column({ name: 'request_id', type: 'uuid', nullable: true }) requestId!: string | null;
+  @Column({ type: 'jsonb', default: '{}' }) detail!: Record<string, unknown>;
+  @CreateDateColumn({ name: 'created_at', type: 'timestamptz' }) createdAt!: Date;
+}

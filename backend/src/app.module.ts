@@ -13,6 +13,8 @@ import { InventoryController } from './inventory.controller';
 import { InventoryService } from './inventory.service';
 import { CommerceController } from './commerce.controller';
 import { CommerceService } from './commerce.service';
+import { OpportunityController } from './opportunity.controller';
+import { OpportunityService } from './opportunity.service';
 
 @Module({
   imports: [
@@ -41,7 +43,7 @@ import { CommerceService } from './commerce.service';
       }),
     }),
   ],
-  controllers: [ApiController, InventoryController, CommerceController],
-  providers: [ApiService, OpsDatabase, InventoryService, CommerceService, AuthGuard, { provide: APP_GUARD, useExisting: AuthGuard }],
+  controllers: [ApiController, InventoryController, CommerceController, OpportunityController],
+  providers: [ApiService, OpsDatabase, InventoryService, CommerceService, OpportunityService, AuthGuard, { provide: APP_GUARD, useExisting: AuthGuard }],
 })
 export class AppModule {}

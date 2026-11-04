@@ -8,6 +8,7 @@
     "start": "node dist/main.js",
     "typecheck": "tsc --noEmit",
     "test:operations": "npm run build && node tests/operations.integration.cjs",
+    "test:opportunities": "npm run build && node tests/opportunities.integration.cjs",
     "migration:run": "typeorm-ts-node-commonjs migration:run -d src/data-source.ts",
     "migration:revert": "typeorm-ts-node-commonjs migration:revert -d src/data-source.ts",
     "db:prepare": "ts-node src/prepare-schema.ts",
